@@ -7,7 +7,7 @@ const LockSchema = new mongoose.Schema({
     _id: String,
     acquirer: String,
     acquiredAt: Date,
-    updatedAt: { type: Date, expires: 10, default: Date.now }
+    updatedAt: { type: Date, expires: 2 * 60, default: Date.now }
 });
 const Lock = mongoose.model('Lock', LockSchema);
 
@@ -15,7 +15,6 @@ class DBLock {
     constructor() {
         this._uuid = this.uuid(); // 分布式节点的uuid
         console.log(this._uuid);
-        this._autoRenewTimer = new Map(); // 自动续期定时器id
     }
 
     // 基于时间戳生成的uuid
@@ -51,7 +50,6 @@ class DBLock {
     async lock(name, retryInterval = 3000) {
         while (true) {
             if (await this.acquire(name)) {
-                this.autoRenew(name);
                 break;
             } else {
                 await this.sleep(retryInterval);
@@ -61,7 +59,6 @@ class DBLock {
 
     // 解锁
     async unlock(name) {
-        this.removeRenew(name);
         await Lock.deleteMany({ _id: name, acquirer: this._uuid });
     }
 
@@ -74,22 +71,6 @@ class DBLock {
             }
         );
         console.log('renew');
-    }
-
-    // 自动续期
-    autoRenew(name) {
-        this._autoRenewTimer.set(
-            name,
-            setInterval(() => this.renew(name), 10 * 1000)
-        );
-    }
-
-    // 移除自动续期
-    removeRenew(name) {
-        let timerID = this._autoRenewTimer.get(name);
-        if (timerID) {
-            clearInterval(timerID);
-        }
     }
 
     // 睡眠

@@ -8,7 +8,9 @@ async function main() {
     while(true) {
         await dblock.lock('send_sms');
         console.log('Locked');
-        await sleep(2 * 1000);
+        await sleep(15 * 1000);
+        await dblock.renew('send_sms');
+        await sleep(15 * 1000);
         await dblock.unlock('send_sms');
         console.log('unlock');
         await sleep(3 * 1000);
