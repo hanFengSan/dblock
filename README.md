@@ -8,14 +8,14 @@ const LockSchema = new mongoose.Schema({
     _id: String, // 锁名
     acquirer: String, // 分布式结点的uuid
     acquiredAt: Date, // 获取锁时的时间
-    updatedAt: { type: Date, expires: 5* 60, default: Date.now } // 更新时间, 五分钟后过期自动删除
+    updatedAt: { type: Date, expires: 2 * 60, default: Date.now } // 更新时间, 2分钟后过期自动删除
 });
 ```
 * *_id*: 这个_id直接用于存储锁名, 直接利用**MongoDB中_id的唯一性**来保证锁的唯一
 * *acquirer*: 这种用于保存分布式结点的uuid, 这样方便在数据中查看是谁在使用这把锁, 以及删除的时候, 联查这个属性, 避免删错
 * *acquiredAt*: 获取到锁的时候, 存入获取时间到这个属性, 这样可以和updatedAt想减, 可得知正常使用的这个锁的节点已经使用了的时长.
 * *updatedAt*: 更新时间, 
-  1. 初始时和acquiredAt一致. 然后节点在使用时, 每隔一段时间就更新一次这个属性, 避免使用时长过长, 导致超过了expires时间, 而被迫释放锁.
+  1. 初始时和acquiredAt一致. 然后节点在使用时, 如果执行时间比较长, 则每隔一段时间调用renew函数更新一次这个属性, 避免使用时长过长, 导致超过了expires时间, 而被迫释放锁.
   2. 设置了自动过期时间, 也就是expires属性, 这个属性对应mongoDB中的expireafterseconds的属性. 避免节点获取锁后, 挂掉, 从而导致死锁. 超时后, MongoDB会自动删除. **注意: MongoDB的expire调度是每分钟一次, 所以不是一过期就立马删除的**
 
 #### 具体实现demo
@@ -39,7 +39,6 @@ class DBLock {
     constructor() {
         this._uuid = this.uuid(); // 分布式节点的uuid
         console.log(this._uuid);
-        this._autoRenewTimer = new Map(); // 自动续期定时器id
     }
 
     // 基于时间戳生成的uuid
@@ -75,7 +74,6 @@ class DBLock {
     async lock(name, retryInterval = 3000) {
         while (true) {
             if (await this.acquire(name)) {
-                this.autoRenew(name);
                 break;
             } else {
                 await this.sleep(retryInterval);
@@ -85,7 +83,6 @@ class DBLock {
 
     // 解锁
     async unlock(name) {
-        this.removeRenew(name);
         await Lock.deleteMany({ _id: name, acquirer: this._uuid });
     }
 
@@ -98,22 +95,6 @@ class DBLock {
             }
         );
         console.log('renew');
-    }
-
-    // 自动续期
-    autoRenew(name) {
-        this._autoRenewTimer.set(
-            name,
-            setInterval(() => this.renew(name), 10 * 1000)
-        );
-    }
-
-    // 移除自动续期
-    removeRenew(name) {
-        let timerID = this._autoRenewTimer.get(name);
-        if (timerID) {
-            clearInterval(timerID);
-        }
     }
 
     // 睡眠
@@ -137,12 +118,18 @@ async function sleep(ms) {
 
 async function main() {
     while(true) {
+      try {
         await dblock.lock('send_sms');
         console.log('Locked');
-        await sleep(2 * 1000);
-        await dblock.unlock('send_sms');
+        await sleep(15 * 1000);
+        await dblock.renew('send_sms');
+        await sleep(15 * 1000);
         console.log('unlock');
         await sleep(3 * 1000);
+      } finally {
+        await dblock.unlock('send_sms');
+
+      }
     }
 }
 
